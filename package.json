@@ -2,17 +2,20 @@
   "name": "clipforge",
   "private": true,
   "version": "0.1.0",
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "build:core": "npm run build -w @clipforge/core",
     "build:media": "npm run build -w @clipforge/media",
     "build:api": "npm run build -w @clipforge/api",
-    "build": "npm run build:core && npm run build:media && npm run build:api",
-    "test": "npm run test -w @clipforge/core && npm run test -w @clipforge/media && npm run test -w @clipforge/api",
+    "build": "npm run build -w @clipforge/core && npm run build -w @clipforge/media && npm run build -w @clipforge/db && npm run build -w @clipforge/media-pipeline && npm run build -w @clipforge/ai-providers && npm run build -w @clipforge/video-renderer && npm run build -w @clipforge/api",
+    "test": "npm run test -w @clipforge/core && npm run test -w @clipforge/media && npm run test -w @clipforge/media-pipeline && npm run test -w @clipforge/video-renderer",
     "dev:api": "npm run dev -w @clipforge/api"
   },
   "devDependencies": {
-    "typescript": "^5.6.3",
-    "@types/node": "^20.14.0"
+    "@types/node": "^20.14.0",
+    "typescript": "^5.6.3"
   }
 }
