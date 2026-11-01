@@ -43,11 +43,17 @@ export async function ffprobe(path: string): Promise<MediaMeta> {
   };
 }
 
-/** Scene-change detection using the scdet filter. Returns boundary times (s). */
+/**
+ * Scene-change detection using the select+showinfo filters. Returns boundary times (s).
+ * `threshold` is on a 0-100 scale (PySceneDetect-compatible). ffmpeg scene scores are
+ * in [0,1], so we map via threshold/100 and clamp to (0.001, 0.999) to keep the
+ * comparison meaningful (a raw threshold of 100 would demand score > 1 → never true).
+ */
 export async function detectScenes(path: string, threshold = 5, maxScenes = 200): Promise<number[]> {
+  const score = Math.min(0.999, Math.max(0.001, threshold / 100));
   const { stderr } = await pexec(
     'ffmpeg',
-    ['-v', 'info', '-i', path, '-filter:v', `select='gt(scene,${Math.min(1, threshold / 10)})',showinfo`, '-f', 'null', '-'],
+    ['-v', 'info', '-i', path, '-filter:v', `select='gt(scene,${score})',showinfo`, '-f', 'null', '-'],
     { maxBuffer: 64 * 1024 * 1024 },
   );
   const times: number[] = [];

@@ -1,0 +1,232 @@
+// ClipForge domain model.
+// Job state machine states mirror @clipforge/core JobStatus enum exactly —
+// the core package validates transitions; the DB stores the current state.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String    // scrypt hash, see apps/api/src/auth/passwords.ts
+  name         String    @default("")
+  createdAt    DateTime  @default(now())
+  projects     Project[]
+  apiTokens    ApiToken[]
+
+  @@map("users")
+}
+
+model ApiToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  tokenHash String   @unique // sha256 of issued token; raw token shown once
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+
+  @@index([userId])
+  @@map("api_tokens")
+}
+
+model Project {
+  id          String     @id @default(uuid())
+  ownerId     String
+  owner       User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name        String
+  description   String     @default("")
+  createdAt     DateTime   @default(now())
+  campaigns   Campaign[]
+  assets      Asset[]
+  jobs        Job[]
+  clips       Clip[]
+
+  @@index([ownerId])
+  @@map("projects")
+}
+
+model Campaign {
+  id          String   @id @default(uuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String
+  objective   String   @default("")
+  audience    String   @default("")
+  tone        String   @default("")
+  cta         String   @default("")
+  language    String   @default("en")
+  minDurationS Int     @default(15)
+  maxDurationS Int     @default(60)
+  aspectRatios String[] @default(["9:16"])
+  platforms    String[] @default(["shorts"])
+  // DO/DON'T rules as validated JSON (CampaignBriefSchema.rules in @clipforge/core)
+  rules       Json     @default("[]")
+  archived    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  assets      Asset[]
+  jobs        Job[]
+  clips       Clip[]
+
+  @@index([projectId])
+  @@map("campaigns")
+}
+
+enum AssetKind {
+  SOURCE_VIDEO
+  GENERATED_VIDEO
+  IMAGE
+  AUDIO
+  VOICEOVER
+  RENDER_OUTPUT
+}
+
+enum AssetStatus {
+  UPLOADING
+  READY
+  FAILED
+}
+
+model Asset {
+  id          String      @id @default(uuid())
+  projectId   String
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  campaignId  String?
+  campaign    Campaign?   @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  kind        AssetKind
+  status      AssetStatus @default(UPLOADING)
+  filename    String
+  contentType String
+  sizeBytes   BigInt      @default(0)
+  // S3 object key inside the configured bucket
+  storageKey  String      @unique
+  // ffprobe-derived metadata (durationS, width, height, fps, codecs) once PROBING ran
+  meta        Json?
+  // validated magic-byte signature, e.g. "mp4", "webm", "png"
+  signature   String      @default("")
+  error       String?
+  createdAt   DateTime    @default(now())
+  jobs        Job[]       @relation("JobAsset")
+  candidates  Candidate[]
+
+  @@index([projectId])
+  @@index([campaignId])
+  @@map("assets")
+}
+
+enum JobType {
+  CLIP_ANALYSIS
+  CLIP_RENDER
+  GENERATION
+}
+
+enum JobStatus {
+  QUEUED
+  VALIDATING
+  PROBING
+  TRANSCRIBING
+  SCENING
+  ANALYZING
+  SCORING
+  AWAITING_REVIEW
+  RENDERING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model Job {
+  id          String    @id @default(uuid())
+  type        JobType
+  status      JobStatus @default(QUEUED)
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  campaignId  String?
+  campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  assetId     String?
+  asset       Asset?    @relation("JobAsset", fields: [assetId], references: [id], onDelete: SetNull)
+  // idempotency: caller-supplied key scoped per project prevents duplicate enqueue
+  idempotencyKey String?
+  input       Json      @default("{}")
+  result      Json?
+  error       String?
+  attempt     Int       @default(0)
+  // monotonic revision for optimistic state transitions (retry-safety)
+  revision    Int       @default(0)
+  events      JobEvent[]
+  candidates  Candidate[]
+  clip        Clip?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([projectId, idempotencyKey])
+  @@index([status])
+  @@index([type, status])
+  @@map("jobs")
+}
+
+model JobEvent {
+  id     String    @id @default(uuid())
+  jobId  String
+  job    Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  from   JobStatus
+  to     JobStatus
+  at     DateTime  @default(now())
+  message String?
+
+  @@index([jobId, at])
+  @@map("job_events")
+}
+
+model Candidate {
+  id            String  @id @default(uuid())
+  jobId         String
+  job           Job     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  assetId       String
+  asset         Asset   @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  startS        Float
+  endS          Float
+  title         String  @default("")
+  reason        String  @default("")
+  structure     Json    // hook/body/cta windows {hookStartS,hookEndS,bodyEndS,ctaStartS,ctaEndS}
+  baseScore     Float
+  semanticScore Float?
+  finalScore    Float
+  compliancePassed Boolean @default(true)
+  violations    Json    @default("[]")
+  transcript    Json    @default("[]") // word/segment timings for review UI
+  approved      Boolean @default(false)
+  rejected      Boolean @default(false)
+  sortOrder     Int     @default(0)
+  createdAt     DateTime @default(now())
+
+  @@index([jobId])
+  @@map("candidates")
+}
+
+model Clip {
+  id          String   @id @default(uuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  campaignId  String?
+  campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  candidateId String?
+  jobId       String   @unique
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  aspectRatio String   @default("9:16")
+  durationS   Float
+  storageKey  String   // rendered output object key
+  srtKey      String?  // sidecar subtitle file key
+  assKey      String?
+  burnedIn    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([projectId])
+  @@map("clips")
+}
