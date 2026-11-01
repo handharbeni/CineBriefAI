@@ -86,13 +86,18 @@ export async function measureAudioEnergy(
 /** Fraction of [start,end] that lies inside complete detected scenes. */
 export function sceneCompleteness(scenes: Scene[], start: number, end: number): number {
   if (!scenes.length || end <= start) return 0;
+  // Fraction of the window covered by scenes, minus a penalty for each scene
+  // boundary that falls strictly inside the window (i.e. the clip cuts a shot).
   let covered = 0;
+  let cutsInside = 0;
   for (const s of scenes) {
     const lo = Math.max(start, s.startTime);
     const hi = Math.min(end, s.endTime);
     if (hi > lo) covered += hi - lo;
+    if (s.startTime > start && s.startTime < end) cutsInside++;
   }
-  return covered / (end - start);
+  const coverage = Math.min(1, covered / (end - start));
+  return Math.max(0, coverage - cutsInside * 0.5);
 }
 
 /**
